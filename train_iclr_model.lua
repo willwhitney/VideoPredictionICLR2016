@@ -5,28 +5,59 @@
     Uses latent variable in additive mode at each level
     Supports sgd and adagrad optimization
 --]]
-
 require('torch')
 require('optim')
 require('get_model')
-require 'gfx.js'
+require 'image'
+-- require 'gfx.js'
+
 
 nngraph.setDebug(false)
-gfx.verbose = false
+-- gfx.verbose = false
 torch.setnumthreads(2)
 torch.manualSeed(1)
 
 opt_default = {
     -- general
+
+    -- devid = 1,                 -- GPU id
+    -- saveName = 'model-kitti-bigcrop.t7',  -- save file name
+    -- dataset = 'kitti',        -- dataset name
+    -- nIters = 500,             -- number of minibatches per "epoch"
+ 
+    -- devid = 2,                 -- GPU id
+    -- saveName = 'model-kitti-seg-bigcrop.t7',  -- save file name
+    -- dataset = 'vkitti_seg',        -- dataset name
+    -- iterm = false,
+    -- nIters = 500,             -- number of minibatches per "epoch"
+
     devid = 2,                 -- GPU id
-    saveName = 'model.t7',  -- save file name
+    saveName = 'test.t7',  -- save file name
+    dataset = 'kitti',        -- dataset name
+    iterm = false,
+    nIters = 500,             -- number of minibatches per "epoch"
+    nDonkeys = 4,
+
+    
+    -- devid = 2,                 -- GPU id
+    -- saveName = 'test.t7',  -- save file name
+    -- dataset = 'ucf101',        -- dataset name
+    -- iterm = false,
+    
+    -- devid = 3,                 -- GPU id
+    -- saveName = 'test.t7',  -- save file name
+    -- dataset = 'vkitti_seg',        -- dataset name
+
+    
     loadName = '',
     loadOpt=false,
-    dataset = 'ucf101',        -- dataset name
+    -- dataset = 'ucf101',        -- dataset name
+
     -- training
     nEpoches = 10000,         -- number of "epoches" per training
-    nIters = 100,             -- number of minibatches per "epoch"
-    batchsize = 8,            -- number of samples per minibatches
+    -- nIters = 1,             -- number of minibatches per "epoch"
+    -- nIters = 500,             -- number of minibatches per "epoch"
+    batchsize = 100,            -- number of samples per minibatches
     -- model
     h = 32,
     w = 32,                    -- size of the patches
@@ -116,9 +147,16 @@ for k, v in pairs(opt_default) do
         opt[k] = v
     end
 end
+opt.seqLength = opt.nInputFrames + opt.nTargetFrames
+
 modelState = nil
 advState = nil
 assert((opt.advweight == 0) ~= (opt.advNIter ~= 0)) -- if not, it's probably a mistake
+
+
+if opt.iterm then
+    iterm = require 'iterm'
+end
 
 cutorch.setDevice(opt.devid)
 
@@ -151,14 +189,71 @@ elseif opt.dataset == 'ucf101' then
     local optt = opt -- need local var, opt is global
     dataset = ThreadedDatasource(
        function()
-	  require('datasources.augment')
-	  require('datasources.ucf101')
-	  local ucfdataset = UCF101Datasource{
-	     nInputFrames = optt.nInputFrames+optt.nTargetFrames
-	  }
-	  return AugmentDatasource(ucfdataset, {crop = {h, w}})
-       end, {nDonkeys = 8})
+      require('datasources.augment')
+      require('datasources.ucf101')
+      local ucfdataset = UCF101Datasource{
+         nInputFrames = optt.nInputFrames+optt.nTargetFrames
+      }
+      return AugmentDatasource(ucfdataset, {crop = {h, w}})
+       end, {nDonkeys = opt.nDonkeys})
     dataset:cuda()
+elseif opt.dataset == 'kitti' then
+    require('datasources.kitti_thread')
+    local opt_tt = opt -- need local var, opt is global
+    opt_tt.geometry = {3, 32, 32}
+    opt_tt.cropSize = 227
+    opt_tt.imageSize = 32
+    -- require('datasources.kitti')
+    dataset = {nChannels = 3}
+
+    -- print(opt_t)
+    trainLoader = ThreadedDatasource(
+        function()
+            -- opt = opt_tt
+            opt_t = opt_tt
+            -- print('train', opt_t)
+            require('datasources.kitti')
+            return trainLoader
+        end, 
+        {nDonkeys = opt.nDonkeys})
+    valLoader = ThreadedDatasource(
+        function()
+            -- opt = opt_t
+            opt_t = opt_tt
+            -- print('val', opt_t)
+            require('datasources.kitti')
+            return valLoader
+        end, 
+        {nDonkeys = opt.nDonkeys})
+elseif opt.dataset == 'vkitti_seg' then
+    require('datasources.kitti_thread')
+    local opt_tt = opt -- need local var, opt is global
+    opt_tt.geometry = {3, 32, 32}
+    opt_tt.cropSize = 227
+    opt_tt.imageSize = 32
+    -- require('datasources.kitti')
+    dataset = {nChannels = 3}
+
+    -- print(opt_t)
+    trainLoader = ThreadedDatasource(
+        function()
+            -- opt = opt_tt
+            opt_t = opt_tt
+            -- print('train', opt_t)
+            require('datasources.vkitti_seg')
+            return trainLoader
+        end, 
+        {nDonkeys = opt.nDonkeys})
+    valLoader = ThreadedDatasource(
+        function()
+            -- opt = opt_t
+            opt_t = opt_tt
+            -- print('val', opt_t)
+            require('datasources.vkitti_seg')
+	        return valLoader
+        end, 
+        {nDonkeys = opt.nDonkeys})
+    -- dataset:cuda()
 else
    error("Unknown dataset " .. opt.dataset)
 end
@@ -284,15 +379,46 @@ function adv_accGradParameters(...)
 end
 
 local input_g, target_g = torch.CudaTensor(), torch.CudaTensor()
+-- function getBatch(set)
+--     local batch, label =
+--     unpack(time_run(function() return {dataset:nextBatch(opt.batchsize, set)} end,
+-- 		    timers.data))
+--     input_g:resize(opt.batchsize, opt.nInputFrames, dataset.nChannels,
+-- 		   batch:size(4), batch:size(5))
+--     input_g:copy(batch:narrow(2, 1, opt.nInputFrames))
+--     target_g:resize(opt.batchsize, opt.nTargetFrames, dataset.nChannels,
+-- 		   batch:size(4), batch:size(5))
+--     target_g:copy(batch:narrow(2, opt.nInputFrames+1, opt.nTargetFrames))
+
+--     local input = preprocessInput:forward(input_g)
+--     local target = preprocessTarget:forward(target_g)
+--     print(input:size())
+--     print(target:size())
+--     -- return preprocessInput:forward(input_g), preprocessTarget:forward(target_g)
+-- end
+
+-- the kitti version
 function getBatch(set)
-    local batch, label =
-    unpack(time_run(function() return {dataset:nextBatch(opt.batchsize, set)} end,
-		    timers.data))
+    -- print(trainLoader)
+    -- print(trainLoader.getSeqBatch)
+    local batch
+    if set == 'train' then
+        batch = time_run(
+            function() return trainLoader:getSeqBatch(opt.batchsize, opt.nInputFrames + 1) end,
+            timers.data)
+    elseif set == 'test' then
+        batch = time_run(
+            function() return valLoader:getSeqBatch(opt.batchsize, opt.nInputFrames + 1) end,
+            timers.data)
+    end
+    batch = batch:transpose(1,2)
     input_g:resize(opt.batchsize, opt.nInputFrames, dataset.nChannels,
-		   batch:size(4), batch:size(5))
+           batch:size(4), batch:size(5))
+    -- print(input_g:size())
+    -- print(batch:size())
     input_g:copy(batch:narrow(2, 1, opt.nInputFrames))
     target_g:resize(opt.batchsize, opt.nTargetFrames, dataset.nChannels,
-		   batch:size(4), batch:size(5))
+           batch:size(4), batch:size(5))
     target_g:copy(batch:narrow(2, opt.nInputFrames+1, opt.nTargetFrames))
     return preprocessInput:forward(input_g), preprocessTarget:forward(target_g)
 end
@@ -448,11 +574,11 @@ for iEpoch = 1, opt.nEpoches do
     print_timers()
 
     if iEpoch % 10 == 0 then
-        printOpt(opt)
+        -- printOpt(opt)
         collectgarbage()
     end
     if iEpoch % 100 == 1 then
-        gfx.clear()
+        -- gfx.clear()
     end
 
 
@@ -480,10 +606,13 @@ for iEpoch = 1, opt.nEpoches do
                                  opt.nTargetFrames, dataset.nChannels,
                                  targetFull:size(3),
                                  targetFull:size(4))
+    
+    -- local todisp = torch.Tensor(opt.batchsize, opt.nInputFrames + opt.nTargetFrames, inputFull:size(3), inputFull:size(4), inputFull:size(5))
     local todisp = {}
-    for i = 1, opt.nInputFrames do
-        for j = 1, opt.batchsize do
-            todisp[1+#todisp] = inputFull[j][i]
+    for j = 1, opt.batchsize do
+        todisp[j] = {}
+        for i = 1, opt.nInputFrames do
+            todisp[j][i] = inputFull[j][i]:float()
         end
     end
     for i = 1, opt.nTargetFrames do
@@ -491,10 +620,24 @@ for iEpoch = 1, opt.nEpoches do
             todisp[1+#todisp] = targetFull[j][i]
             end--]]
         for j = 1, opt.batchsize do
-            todisp[1+#todisp] = predFull[j][i]
+            todisp[j][i + opt.nInputFrames] = predFull[j][i]:float()
+        end
+    end
+    if opt.iterm then
+        for j = 1, math.min(opt.batchsize, 20) do
+            print('')
+            iterm.image(todisp[j])
         end
     end
 
-    win = gfx.image(todisp, {win=win, zoom = 1, nperrow = opt.batchsize,
-                             legend=opt.saveName, padding=2})
+    local tosave = {}
+    for j = 1, #todisp do
+        for i = 1, #todisp[1] do
+            table.insert(tosave, todisp[j][i])
+        end
+    end
+    image.save(opt.saveName .. '_' .. iEpoch .. '.png', image.toDisplayTensor{input=tosave, scaleeach=true, nrow=#todisp[1]})
+
+    -- win = gfx.image(todisp, {win=win, zoom = 1, nperrow = opt.batchsize,
+    --                          legend=opt.saveName, padding=2})
 end
