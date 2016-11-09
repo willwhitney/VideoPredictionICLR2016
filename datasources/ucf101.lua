@@ -16,7 +16,7 @@ local UCF101Datasource, parent = torch.class('UCF101Datasource', 'ClassDatasourc
 function UCF101Datasource:__init(params)
    parent.__init(self)
    assert(params.nInputFrames ~= nil, "UCF101Dataset: must specify nInputFrames")
-   self.datapath = params.datapath or 'datasources/ucf101/'
+   self.datapath = params.datapath or '/misc/vlgscratch3/FergusGroup/wwhitney/pred-beyond-mse/MathieuICLR16TestCode/UCF101frm10p/'
    local setfiles = {train = 'trainlist01.txt', test = 'testlist01.txt'}
    assert(paths.dirp(self.datapath), 'Path ' .. self.datapath .. ' does not exist')
    local classes = paths.dir(self.datapath)
@@ -77,30 +77,30 @@ function UCF101Datasource:nextBatch(batchSize, set)
    self.output_cpu:resize(batchSize, self.nInputFrames, self.nChannels, self.h, self.w)
    self.labels_cpu:resize(batchSize)
    for i = 1, batchSize do
-      local done = false
-      while not done do
-	 local iclass = torch.random(self.nClasses)
-	 local class = self.classes[iclass]
-	 local idx = torch.random(#self.sets[set][class])
-	 local filepath = paths.concat(self.datapath, class, self.sets[set][class][idx])
-	 local result = self.thffmpeg:open(filepath)
-	 if result then
-	    if self.nbframes[filepath] == nil then
-	       self.nbframes[filepath] = self.thffmpeg:length()
-	    end
-	    local nframes = self.nbframes[filepath]
-	    if nframes >= self.nInputFrames then
-	       self.labels_cpu[i] = iclass
-	       local istart = torch.random(nframes - self.nInputFrames + 1)
-	       self.thffmpeg:seek(istart-1)
-	       for j = 1, self.nInputFrames do
-		  self.thffmpeg:next_frame(self.output_cpu[i][j])
-	       end
-	       done = self:testEnoughMotion(self.output_cpu[i][-2], self.output_cpu[i][-1])
-	    end
-	 else
-	    print("can't open", i, threadid_t, filepath)
-	 end
+    	local done = false
+      	while not done do
+			local iclass = torch.random(self.nClasses)
+			local class = self.classes[iclass]
+			local idx = torch.random(#self.sets[set][class])
+			local filepath = paths.concat(self.datapath, class, self.sets[set][class][idx])
+			local result = self.thffmpeg:open(filepath)
+			if result then
+			   	if self.nbframes[filepath] == nil then
+			      	self.nbframes[filepath] = self.thffmpeg:length()
+			   	end
+			   	local nframes = self.nbframes[filepath]
+			   	if nframes >= self.nInputFrames then
+			      	self.labels_cpu[i] = iclass
+			      	local istart = torch.random(nframes - self.nInputFrames + 1)
+			      	self.thffmpeg:seek(istart-1)
+			      	for j = 1, self.nInputFrames do
+						self.thffmpeg:next_frame(self.output_cpu[i][j])
+			      	end
+			      	done = self:testEnoughMotion(self.output_cpu[i][-2], self.output_cpu[i][-1])
+			   	end
+			else
+			   print("can't open", i, threadid_t, filepath)
+			end
       end
    end
    self.thffmpeg:close()

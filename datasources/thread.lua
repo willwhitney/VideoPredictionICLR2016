@@ -17,18 +17,18 @@ function ThreadedDatasource:__init(getDatasourceFun, params)
    --threads.Threads.serialization('threads.sharedserialize') --TODO
    self.donkeys = threads.Threads(self.nDonkeys,
       function(threadid)
-	 require 'torch'
-	 require 'math'
-	 require 'os'
-	 torch.manualSeed(threadid*os.clock())
-	 math.randomseed(threadid*os.clock()*1.7)
-	 torch.setnumthreads(1)
-	 threadid_t = threadid
-	 datasource_t = getDatasourceFun()
+      	 require 'torch'
+      	 require 'math'
+      	 require 'os'
+      	 torch.manualSeed(threadid*os.clock())
+      	 math.randomseed(threadid*os.clock()*1.7)
+      	 torch.setnumthreads(1)
+      	 threadid_t = threadid
+      	 datasource_t = getDatasourceFun()
       end)
    self.donkeys:addjob(
       function()
-	 return datasource_t.nChannels, datasource_t.nClasses, datasource_t.h, datasource_t.w
+	        return datasource_t.nChannels, datasource_t.nClasses, datasource_t.h, datasource_t.w
       end,
       function(nChannels, nClasses, h, w)
 	 self.nChannels, self.nClasses = nChannels, nClasses
@@ -63,26 +63,27 @@ function ThreadedDatasource:nextBatch(batchSize, set)
    assert(set ~= nil, 'nextBatch: must specify set')
    local function addjob()
       self.donkeys:addjob(
-	 function()
-	    collectgarbage()
-	    local batch, labels = datasource_t:nextBatch(batchSize, set)
-	    return batch, labels
-	 end,
-	 function(outputs, labels)
-	    if self.output ~= nil then
-	       self.output:resize(outputs:size()):copy(outputs)
-	       self.labels:resize(labels:size()):copy(labels)
-	       self.last_config = {batchSize, set}
-	    end
-	 end)
+      	 function()
+      	    collectgarbage()
+      	    local batch, labels = datasource_t:nextBatch(batchSize, set)
+      	    return batch, labels
+      	 end,
+      	 function(outputs, labels)
+      	    if self.output ~= nil then
+      	       self.output:resize(outputs:size()):copy(outputs)
+      	       self.labels:resize(labels:size()):copy(labels)
+      	       self.last_config = {batchSize, set}
+      	    end
+      	 end
+      )
    end
    if not self.started then
       self.donkeys:synchronize()
       self.donkeys:specific(false)
       for i = 1, self.nDonkeys do
-	 if self.donkeys:acceptsjob() then
-	    addjob()
-	 end
+      	 if self.donkeys:acceptsjob() then
+      	    addjob()
+      	 end
       end
       self.started = true
    end
